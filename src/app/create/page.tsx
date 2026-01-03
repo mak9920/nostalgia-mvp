@@ -175,6 +175,11 @@ export default function CreatePage() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  // UX: wenn man von Mobile -> Desktop wechselt, Menu schließen
+  useEffect(() => {
+    if (!isMobile) setMenuOpen(false);
+  }, [isMobile]);
+
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const f = acceptedFiles?.[0];
     if (!f) return;
@@ -213,7 +218,6 @@ export default function CreatePage() {
     const rows = (data || []) as JobRow[];
     setJobs(rows);
 
-    // Active job stabil halten (wenn möglich)
     setActiveJob((prev) => {
       if (prev) {
         const upd = rows.find((r) => r.id === prev.id);
@@ -256,7 +260,6 @@ export default function CreatePage() {
     setStatusText("Upload läuft …");
     setJobError(null);
 
-    // 1) Order erstellen
     const orderRes = await fetch("/api/orders/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -272,7 +275,6 @@ export default function CreatePage() {
 
     const orderId = orderJson.order.id as string;
 
-    // 2) Upload Image
     const fd = new FormData();
     fd.append("orderId", orderId);
     fd.append("file", file);
@@ -292,7 +294,6 @@ export default function CreatePage() {
     setUiState("processing");
     setStatusText("Video wird erstellt …");
 
-    // 3) Job run
     const runRes = await fetch("/api/jobs/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -307,7 +308,6 @@ export default function CreatePage() {
       return;
     }
 
-    // falls direkt done zurückkommt
     if (runJson?.job?.output_video_key) {
       setActiveJob({
         id: runJson.job.id,
@@ -389,6 +389,12 @@ export default function CreatePage() {
     isMobile && menuOpen && styles.sidebarMobileOpen
   );
 
+  // ✅ Responsive: Shell + Content Grid dynamisch
+  const shellStyle = sx(styles.shell, isMobile && styles.shellMobile);
+  const contentGridStyle = sx(styles.contentGrid, isMobile && styles.contentGridMobile);
+  const heroTitleStyle = sx(styles.heroTitle, isMobile && styles.heroTitleMobile);
+  const previewStyle = sx(styles.preview, isMobile && styles.previewMobile);
+
   return (
     <main style={styles.page}>
       <div style={styles.bg} aria-hidden="true" />
@@ -404,8 +410,8 @@ export default function CreatePage() {
       ) : null}
 
       {/* Topbar */}
-      <header style={styles.topbar}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <header style={sx(styles.topbar, isMobile && styles.topbarMobile)}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
           <button
             onClick={() => setMenuOpen((v) => !v)}
             style={styles.iconButton}
@@ -417,107 +423,204 @@ export default function CreatePage() {
 
           <div style={styles.brand}>
             <div style={styles.logoMark}>N</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
               <div style={styles.brandName}>Photo Reel Maker</div>
               <div style={styles.brandSub}>Create</div>
             </div>
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={styles.userChip} title={userEmail}>
-            {userEmail || "User"}
-          </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          {!isMobile ? (
+            <div style={styles.userChip} title={userEmail}>
+              {userEmail || "User"}
+            </div>
+          ) : null}
           <button onClick={logout} style={styles.ghostButton}>
             Logout
           </button>
         </div>
       </header>
 
-      <div style={styles.shell}>
-        {/* Sidebar */}
-        <aside style={sidebarStyle}>
-          <div style={styles.sidebarHeader}>
-            <div style={{ fontWeight: 900, letterSpacing: 0.2 }}>My Projects</div>
-            {isMobile ? (
+      <div style={shellStyle}>
+        {/* Sidebar (Desktop) */}
+        {!isMobile ? (
+          <aside style={sidebarStyle}>
+            <div style={styles.sidebarHeader}>
+              <div style={{ fontWeight: 900, letterSpacing: 0.2 }}>My Projects</div>
+            </div>
+
+            <div style={styles.sidebarList}>
+              {jobs.length === 0 ? (
+                <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 13, padding: 10 }}>
+                  Noch keine Projekte. Erstelle dein erstes Video.
+                </div>
+              ) : (
+                jobs.map((j) => (
+                  <button
+                    key={j.id}
+                    onClick={() => {
+                      setActiveJob(j);
+
+                      const st = String(j.status || "").toLowerCase();
+                      if (st === "processing" || st === "running" || st === "queued") {
+                        setJobId(j.id);
+                        setUiState("processing");
+                        setStatusText("Video wird erstellt …");
+                      } else if (st === "done") {
+                        setJobId(null);
+                        setUiState("done");
+                        setStatusText("Fertig.");
+                      } else if (st === "failed") {
+                        setJobId(null);
+                        setUiState("error");
+                        setStatusText("Job fehlgeschlagen.");
+                        setJobError(j.error || null);
+                      } else {
+                        setJobId(null);
+                        setUiState("idle");
+                        setStatusText("");
+                      }
+                    }}
+                    style={sx(styles.jobRow, activeJob?.id === j.id && styles.jobRowActive)}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                      <div style={{ fontWeight: 900, fontSize: 13 }}>#{j.id.slice(0, 8)}</div>
+                      <StatusPill status={j.status} />
+                    </div>
+                    <div style={{ marginTop: 6, color: "rgba(255,255,255,0.65)", fontSize: 12 }}>
+                      {fmtDate(j.created_at)}
+                    </div>
+                    {String(j.status || "").toLowerCase() === "failed" && j.error ? (
+                      <div
+                        style={{
+                          marginTop: 6,
+                          color: "rgba(255,120,120,0.95)",
+                          fontSize: 12,
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        {String(j.error).slice(0, 120)}
+                      </div>
+                    ) : null}
+                  </button>
+                ))
+              )}
+            </div>
+
+            <div style={styles.sidebarFooter}>
+              <button
+                onClick={() => (window.location.href = "/")}
+                style={styles.ghostButtonFull}
+                title="Zur Landingpage"
+              >
+                ← Zur Landingpage
+              </button>
+            </div>
+          </aside>
+        ) : null}
+
+        {/* Sidebar (Mobile overlay) */}
+        {isMobile ? (
+          <aside style={sidebarStyle}>
+            <div style={styles.sidebarHeader}>
+              <div style={{ fontWeight: 900, letterSpacing: 0.2 }}>My Projects</div>
               <button onClick={() => setMenuOpen(false)} style={styles.iconButtonSm} aria-label="Close">
                 ✕
               </button>
-            ) : null}
-          </div>
+            </div>
 
-          <div style={styles.sidebarList}>
-            {jobs.length === 0 ? (
-              <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 13, padding: 10 }}>
-                Noch keine Projekte. Erstelle dein erstes Video.
-              </div>
-            ) : (
-              jobs.map((j) => (
-                <button
-                  key={j.id}
-                  onClick={() => {
-                    setActiveJob(j);
-                    setMenuOpen(false);
+            <div style={styles.sidebarList}>
+              {jobs.length === 0 ? (
+                <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 13, padding: 10 }}>
+                  Noch keine Projekte. Erstelle dein erstes Video.
+                </div>
+              ) : (
+                jobs.map((j) => (
+                  <button
+                    key={j.id}
+                    onClick={() => {
+                      setActiveJob(j);
+                      setMenuOpen(false);
 
-                    // Polling nur, wenn Job wirklich läuft
-                    const st = String(j.status || "").toLowerCase();
-                    if (st === "processing" || st === "running" || st === "queued") {
-                      setJobId(j.id);
-                      setUiState("processing");
-                      setStatusText("Video wird erstellt …");
-                    } else if (st === "done") {
-                      setJobId(null);
-                      setUiState("done");
-                      setStatusText("Fertig.");
-                    } else if (st === "failed") {
-                      setJobId(null);
-                      setUiState("error");
-                      setStatusText("Job fehlgeschlagen.");
-                      setJobError(j.error || null);
-                    } else {
-                      setJobId(null);
-                      setUiState("idle");
-                      setStatusText("");
-                    }
-                  }}
-                  style={sx(styles.jobRow, activeJob?.id === j.id && styles.jobRowActive)}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                    <div style={{ fontWeight: 900, fontSize: 13 }}>#{j.id.slice(0, 8)}</div>
-                    <StatusPill status={j.status} />
-                  </div>
-                  <div style={{ marginTop: 6, color: "rgba(255,255,255,0.65)", fontSize: 12 }}>
-                    {fmtDate(j.created_at)}
-                  </div>
-                  {String(j.status || "").toLowerCase() === "failed" && j.error ? (
-                    <div style={{ marginTop: 6, color: "rgba(255,120,120,0.95)", fontSize: 12, lineHeight: 1.35 }}>
-                      {String(j.error).slice(0, 120)}
+                      const st = String(j.status || "").toLowerCase();
+                      if (st === "processing" || st === "running" || st === "queued") {
+                        setJobId(j.id);
+                        setUiState("processing");
+                        setStatusText("Video wird erstellt …");
+                      } else if (st === "done") {
+                        setJobId(null);
+                        setUiState("done");
+                        setStatusText("Fertig.");
+                      } else if (st === "failed") {
+                        setJobId(null);
+                        setUiState("error");
+                        setStatusText("Job fehlgeschlagen.");
+                        setJobError(j.error || null);
+                      } else {
+                        setJobId(null);
+                        setUiState("idle");
+                        setStatusText("");
+                      }
+                    }}
+                    style={sx(styles.jobRow, activeJob?.id === j.id && styles.jobRowActive)}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                      <div style={{ fontWeight: 900, fontSize: 13 }}>#{j.id.slice(0, 8)}</div>
+                      <StatusPill status={j.status} />
                     </div>
-                  ) : null}
-                </button>
-              ))
-            )}
-          </div>
+                    <div style={{ marginTop: 6, color: "rgba(255,255,255,0.65)", fontSize: 12 }}>
+                      {fmtDate(j.created_at)}
+                    </div>
+                    {String(j.status || "").toLowerCase() === "failed" && j.error ? (
+                      <div
+                        style={{
+                          marginTop: 6,
+                          color: "rgba(255,120,120,0.95)",
+                          fontSize: 12,
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        {String(j.error).slice(0, 120)}
+                      </div>
+                    ) : null}
+                  </button>
+                ))
+              )}
+            </div>
 
-          <div style={styles.sidebarFooter}>
-            <button onClick={() => (window.location.href = "/")} style={styles.ghostButtonFull} title="Zur Landingpage">
-              ← Zur Landingpage
-            </button>
-          </div>
-        </aside>
+            <div style={styles.sidebarFooter}>
+              <button
+                onClick={() => (window.location.href = "/")}
+                style={styles.ghostButtonFull}
+                title="Zur Landingpage"
+              >
+                ← Zur Landingpage
+              </button>
+            </div>
+          </aside>
+        ) : null}
 
         {/* Main */}
-        <section style={styles.main}>
+        <section style={sx(styles.main, isMobile && styles.mainMobile)}>
           <div style={styles.hero}>
-            <div style={styles.heroTitle}>
+            <div style={heroTitleStyle}>
               Create a living moment<span style={{ color: "rgba(255,255,255,0.85)" }}>.</span>
             </div>
             <div style={styles.heroSub}>
               Lade ein Foto hoch und erhalte ein kurzes Video. Deine bisherigen Projekte findest du links im Menü.
             </div>
+
+            {isMobile ? (
+              <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <div style={sx(styles.userChip, { maxWidth: "100%" })} title={userEmail}>
+                  {userEmail || "User"}
+                </div>
+              </div>
+            ) : null}
           </div>
 
-          <div style={styles.contentGrid}>
+          <div style={contentGridStyle}>
             {/* Upload card */}
             <div style={styles.card}>
               <div style={styles.cardHeader}>
@@ -567,10 +670,7 @@ export default function CreatePage() {
                 style={{
                   marginTop: 12,
                   fontSize: 13,
-                  color:
-                    uiState === "error"
-                      ? "rgba(255,120,120,0.95)"
-                      : "rgba(255,255,255,0.78)",
+                  color: uiState === "error" ? "rgba(255,120,120,0.95)" : "rgba(255,255,255,0.78)",
                 }}
               >
                 {statusText}
@@ -605,7 +705,7 @@ export default function CreatePage() {
                 </div>
               </div>
 
-              <div style={styles.preview}>
+              <div style={previewStyle}>
                 {activeVideoUrl ? (
                   <video controls src={activeVideoUrl} style={{ width: "100%", height: "100%", display: "block" }} />
                 ) : (
@@ -692,6 +792,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: 12,
+  },
+  topbarMobile: {
+    padding: "14px 14px 8px",
   },
 
   shell: {
@@ -703,6 +807,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: "grid",
     gridTemplateColumns: "320px 1fr",
     gap: 16,
+  },
+  shellMobile: {
+    display: "block",
+    padding: "8px 14px 34px",
   },
 
   sidebar: {
@@ -719,10 +827,10 @@ const styles: Record<string, React.CSSProperties> = {
 
   sidebarMobile: {
     position: "fixed",
-    top: 86,
-    left: 16,
-    right: 16,
-    maxHeight: "calc(100vh - 110px)",
+    top: 74,
+    left: 12,
+    right: 12,
+    maxHeight: "calc(100vh - 92px)",
     zIndex: 30,
     transform: "translateY(-8px)",
     opacity: 0,
@@ -775,6 +883,9 @@ const styles: Record<string, React.CSSProperties> = {
     backdropFilter: "blur(12px)",
     padding: 16,
   },
+  mainMobile: {
+    padding: 14,
+  },
 
   hero: {
     padding: "10px 10px 4px",
@@ -784,6 +895,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 950,
     letterSpacing: -0.6,
     lineHeight: 1.08,
+    wordBreak: "break-word",
+  },
+  heroTitleMobile: {
+    fontSize: 26,
+    letterSpacing: -0.4,
   },
   heroSub: {
     marginTop: 8,
@@ -798,6 +914,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     gap: 14,
+  },
+  contentGridMobile: {
+    gridTemplateColumns: "1fr",
+    gap: 12,
   },
 
   card: {
@@ -839,6 +959,9 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: 320,
     border: "1px solid rgba(255,255,255,0.10)",
   },
+  previewMobile: {
+    minHeight: 220,
+  },
 
   secondaryButton: {
     flex: 1,
@@ -863,6 +986,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: "rgba(255,255,255,0.85)",
     fontWeight: 900,
     cursor: "pointer",
+    whiteSpace: "nowrap",
   },
   ghostButtonFull: {
     width: "100%",
@@ -900,6 +1024,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 10,
+    minWidth: 0,
   },
   logoMark: {
     width: 38,
@@ -911,12 +1036,17 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid rgba(255,255,255,0.12)",
     fontWeight: 900,
     letterSpacing: 0.5,
+    flex: "0 0 auto",
   },
   brandName: {
     fontSize: 14,
     fontWeight: 900,
     letterSpacing: 0.2,
     color: "rgba(255,255,255,0.92)",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    maxWidth: 260,
   },
   brandSub: {
     fontSize: 12,
