@@ -15,20 +15,24 @@ export default function AuthCallbackPage() {
   const router = useRouter();
 
   useEffect(() => {
-    // Supabase OAuth callback verarbeitet typischerweise URL Hash/Query
-    // und setzt Session-Cookies / Tokens
     (async () => {
-      // je nach Flow:
-      // await supabase.auth.getSession();
-      // oder
-      // await supabase.auth.exchangeCodeForSession(window.location.href);
+      try {
+        const url = new URL(window.location.href);
 
-      // Wenn du PKCE Code Flow nutzt:
-      const url = window.location.href;
-      const { error } = await supabase.auth.exchangeCodeForSession(url);
+        // 1) Code Flow (PKCE) -> code ist in der Query
+        const code = url.searchParams.get("code");
+        if (code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          router.replace(error ? "/login?error=1" : "/");
+          return;
+        }
 
-      // Danach wohin du willst
-      router.replace(error ? "/login?error=1" : "/");
+        // 2) Implicit Flow / Hash Tokens -> Session auslesen
+        const { data, error } = await supabase.auth.getSession();
+        router.replace(error || !data.session ? "/login?error=1" : "/");
+      } catch {
+        router.replace("/login?error=1");
+      }
     })();
   }, [router]);
 
