@@ -4,9 +4,32 @@ import fs from "fs";
 import path from "path";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
+type AspectRatio = "16:9" | "9:16" | "1:1" | "4:5";
+type MotionStyle =
+  | "mystery"
+  | "friendly_wave"
+  | "playful"
+  | "warm_hug"
+  | "sweet_kiss"
+  | "natural_walk"
+  | "blossoming_flowers";
+
 const Body = z.object({
   jobId: z.string().uuid(),
+  aspectRatio: z.enum(["16:9", "9:16", "1:1", "4:5"]).optional(),
+  motionStyle: z
+    .enum([
+      "mystery",
+      "friendly_wave",
+      "playful",
+      "warm_hug",
+      "sweet_kiss",
+      "natural_walk",
+      "blossoming_flowers",
+    ])
+    .optional(),
 });
+
 const supabaseAdmin = getSupabaseAdmin();
 
 const RUNWAY_HOST = "https://api.dev.runwayml.com";
@@ -20,6 +43,38 @@ function getRunwayApiKey() {
   const apiKey = process.env.RUNWAYML_API_SECRET;
   if (!apiKey) throw new Error("RUNWAYML_API_SECRET missing in .env.local");
   return apiKey;
+}
+
+function runwayRatioFromAspect(aspect: AspectRatio): string {
+  // Runway expects ratio strings like "16:9"
+  // (You currently used "960:960" – that’s basically 1:1. We change to proper ratios.)
+  return aspect;
+}
+
+function motionPrompt(style: MotionStyle): string {
+  // Base guardrails: reduces "random stuff"
+  const base =
+    "Use the provided image as the single source of truth. " +
+    "Do not add new people, objects, text, logos, or background elements. " +
+    "Do not change identity, face, clothing, or environment. " +
+    "Keep motion subtle, natural, and realistic.";
+
+  const specific =
+    style === "friendly_wave"
+      ? "Add a gentle friendly wave. Keep it minimal and natural."
+      : style === "playful"
+      ? "Add subtle playful motion (small joyful micro-movements)."
+      : style === "warm_hug"
+      ? "Add a calm warm hug gesture. Keep it subtle and tasteful."
+      : style === "sweet_kiss"
+      ? "Add a very subtle sweet kiss gesture. Keep it tasteful and minimal."
+      : style === "natural_walk"
+      ? "Add calm lifelike motion as if slowly walking through time."
+      : style === "blossoming_flowers"
+      ? "Add gentle blossoming flowers or soft particles around the subject. Do not cover faces."
+      : "Choose the best fitting subtle motion for the photo.";
+
+  return `${base} ${specific}`;
 }
 
 async function runwayEphemeralUpload(imageBuf: Buffer, filename: string, contentType: string) {
@@ -56,8 +111,8 @@ async function runwayEphemeralUpload(imageBuf: Buffer, filename: string, content
   // 2) Presigned POST to S3
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
-const bytes = new Uint8Array(imageBuf);
-form.append("file", new Blob([bytes], { type: contentType }), filename);
+  const bytes = new Uint8Array(imageBuf);
+  form.append("file", new Blob([bytes], { type: contentType }), filename);
 
   const postRes = await fetch(uploadUrl, { method: "POST", body: form });
   if (!(postRes.status === 204 || postRes.status === 201 || postRes.ok)) {
@@ -68,7 +123,7 @@ form.append("file", new Blob([bytes], { type: contentType }), filename);
   return runwayUri as string;
 }
 
-async function runwayImageToVideo(runwayImageUri: string) {
+async function runwayImageToVideo(runwayImageUri: string, promptText: string, ratio: string) {
   const apiKey = getRunwayApiKey();
 
   // Create task
@@ -82,9 +137,9 @@ async function runwayImageToVideo(runwayImageUri: string) {
     body: JSON.stringify({
       model: "gen4_turbo",
       promptImage: runwayImageUri,
-      promptText: "subtle natural motion, slight head movement, blinking, realistic lighting",
+      promptText,
       duration: 4,
-      ratio: "960:960",
+      ratio,
     }),
   });
 
@@ -118,113 +173,4 @@ export async function POST(req: Request) {
   const parsed = Body.safeParse(json);
 
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
-  }
-
-  const { jobId } = parsed.data;
-
-  // Job laden
-  const { data: job, error: jobErr } = await supabaseAdmin
-    .from("media_jobs")
-    .select("id, order_id, input_image_key, status")
-    .eq("id", jobId)
-    .single();
-
-  if (jobErr || !job) {
-    return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  }
-
-  // Schutz: nicht doppelt verarbeiten
-  if (job.status === "done") {
-    return NextResponse.json({ ok: true, job, note: "Already done" });
-  }
-  if (job.status === "processing") {
-    return NextResponse.json({ error: "Job is already processing" }, { status: 409 });
-  }
-
-  // Status setzen
-  await supabaseAdmin.from("media_jobs").update({ status: "processing", error: null }).eq("id", jobId);
-
-  try {
-    // Input ist relativ zu /public (z.B. uploads/<orderId>/<file>.jpg)
-    const inputPath = path.join(process.cwd(), "public", job.input_image_key);
-
-    if (!fs.existsSync(inputPath)) {
-      throw new Error(`Input file not found: ${inputPath}`);
-    }
-
-    // Output-Ordner
-    const outDir = path.join(process.cwd(), "public", "uploads", String(job.order_id));
-    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-
-    const outputKey = `uploads/${job.order_id}/output_${Date.now()}.mp4`;
-    const outputPath = path.join(process.cwd(), "public", outputKey);
-
-    // 1) Bild laden
-    const imageBuf = fs.readFileSync(inputPath);
-
-    // 2) Ephemeral Upload zu Runway
-const ext = path.extname(inputPath).toLowerCase();
-const contentType =
-  ext === ".png" ? "image/png" :
-  ext === ".webp" ? "image/webp" :
-  "image/jpeg";
-
-const runwayUri = await runwayEphemeralUpload(imageBuf, `input${ext || ".jpg"}`, contentType);
-    // 3) AI Video generieren
-    const result = await runwayImageToVideo(runwayUri);
-
-    // 4) Output Video URL auslesen
-    const out0 = Array.isArray(result.output) ? result.output[0] : null;
-
-const videoUrl =
-  typeof out0 === "string"
-    ? out0
-    : (out0 && typeof out0 === "object" && "url" in out0 ? (out0 as any).url : null);
-
-if (!videoUrl || typeof videoUrl !== "string") {
-  throw new Error(`No output video URL in runway result: ${JSON.stringify(result.output)}`);
-}
-
-
-    // 5) MP4 downloaden und speichern
-    const vidRes = await fetch(videoUrl);
-    if (!vidRes.ok) throw new Error(`Failed to download video: ${vidRes.status}`);
-
-    const arr = new Uint8Array(await vidRes.arrayBuffer());
-    fs.writeFileSync(outputPath, arr);
-
-    if (!fs.existsSync(outputPath)) {
-      throw new Error(`Output MP4 wurde nicht erstellt: ${outputPath}`);
-    }
-
-    // DB updaten
-    const { data: updated, error: updErr } = await supabaseAdmin
-      .from("media_jobs")
-      .update({
-        status: "done",
-        output_video_key: outputKey,
-        output_video_url: null,
-        finished_at: new Date().toISOString(),
-      })
-      .eq("id", jobId)
-      .select("id,status,output_video_key,finished_at")
-      .single();
-
-    if (updErr || !updated) {
-      throw new Error("Failed to update job in DB");
-    }
-
-    return NextResponse.json({ ok: true, job: updated });
-  } catch (e: any) {
-    await supabaseAdmin
-      .from("media_jobs")
-      .update({ status: "failed", error: String(e?.message || e) })
-      .eq("id", jobId);
-
-    return NextResponse.json(
-      { error: "Job failed", details: String(e?.message || e) },
-      { status: 500 }
-    );
-  }
-}
+    return NextResp
