@@ -20,9 +20,8 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
 
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-      "/create"
-    )}`;
+ const redirectTo = `${window.location.origin}/auth/callback?next=/create`;
+
 
     const { error } = await supabase.auth.signInWithOtp({
       email,
