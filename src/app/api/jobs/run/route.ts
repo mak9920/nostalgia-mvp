@@ -195,8 +195,8 @@ export async function POST(req: Request) {
     const runwayUri = await runwayEphemeralUpload(imageBuf, "input.jpg", "image/jpeg");
 
     const promptText = motionPrompt(motionStyle);
-    const result = await runwayImageToVideo(runwayUri, promptText, aspectRatio);
-
+const runwayRatio = runwayRatioFromAspect(aspectRatio);
+const result = await runwayImageToVideo(runwayUri, promptText, runwayRatio);
     const out0 = Array.isArray(result.output) ? result.output[0] : null;
     const videoUrl =
       typeof out0 === "string"
