@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 const Body = z.object({
   jobId: z.string().uuid(),
 });
+const supabaseAdmin = getSupabaseAdmin();
 
 const RUNWAY_HOST = "https://api.dev.runwayml.com";
 const RUNWAY_VERSION = "2024-11-06";
