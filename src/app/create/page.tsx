@@ -15,6 +15,61 @@ type JobRow = {
   error?: string | null;
 };
 
+type AspectRatio = "16:9" | "9:16" | "1:1" | "4:5";
+type MotionStyle =
+  | "mystery"
+  | "friendly_wave"
+  | "playful"
+  | "warm_hug"
+  | "sweet_kiss"
+  | "natural_walk"
+  | "blossoming_flowers";
+
+const MOTIONS: Array<{ id: MotionStyle; title: string; desc: string; emoji: string }> = [
+  {
+    id: "mystery",
+    title: "Mystery Motion",
+    desc: "AI wählt die passende subtile Bewegung.",
+    emoji: "🪄",
+  },
+  {
+    id: "friendly_wave",
+    title: "Friendly Wave",
+    desc: "Natürliche, herzliche Handbewegung.",
+    emoji: "👋",
+  },
+  {
+    id: "playful",
+    title: "Playful Motion",
+    desc: "Leicht verspielt, fröhlich.",
+    emoji: "🎈",
+  },
+  {
+    id: "warm_hug",
+    title: "Warm Hug",
+    desc: "Sanfte Nähe, ruhige Umarmung.",
+    emoji: "🫂",
+  },
+  {
+    id: "sweet_kiss",
+    title: "Sweet Kiss",
+    desc: "Zart, romantisch, sehr dezent.",
+    emoji: "💋",
+  },
+  {
+    id: "natural_walk",
+    title: "Natural Walk",
+    desc: "Ruhige, natürliche Bewegung.",
+    emoji: "🚶",
+  },
+  {
+    id: "blossoming_flowers",
+    title: "Blossoming Flowers",
+    desc: "Sanfte Blumen oder Partikel um das Motiv.",
+    emoji: "🌸",
+  },
+];
+
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -168,6 +223,10 @@ export default function CreatePage() {
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [activeJob, setActiveJob] = useState<JobRow | null>(null);
 
+  // ✅ neue Settings (Default 16:9, Mystery)
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
+  const [motionStyle, setMotionStyle] = useState<MotionStyle>("mystery");
+
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 980);
     onResize();
@@ -260,10 +319,16 @@ export default function CreatePage() {
     setStatusText("Upload läuft …");
     setJobError(null);
 
+    // ✅ sendet aspectRatio + motionStyle mit (du musst im Backend dann übernehmen)
     const orderRes = await fetch("/api/orders/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: userEmail || null, locale: "de" }),
+      body: JSON.stringify({
+        email: userEmail || null,
+        locale: "de",
+        aspectRatio,
+        motionStyle,
+      }),
     });
 
     const orderJson = await orderRes.json();
@@ -278,6 +343,9 @@ export default function CreatePage() {
     const fd = new FormData();
     fd.append("orderId", orderId);
     fd.append("file", file);
+    // ✅ auch im Upload mitschicken (falls du dort preprocess machst)
+    fd.append("aspectRatio", aspectRatio);
+    fd.append("motionStyle", motionStyle);
 
     const upRes = await fetch("/api/upload-image", { method: "POST", body: fd });
     const upJson = await upRes.json();
@@ -294,10 +362,11 @@ export default function CreatePage() {
     setUiState("processing");
     setStatusText("Video wird erstellt …");
 
+    // ✅ auch beim Run mitschicken (falls prompt/ratio dort gebaut wird)
     const runRes = await fetch("/api/jobs/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId: newJobId }),
+      body: JSON.stringify({ jobId: newJobId, aspectRatio, motionStyle }),
     });
 
     const runJson = await runRes.json();
@@ -402,11 +471,7 @@ export default function CreatePage() {
 
       {/* Mobile overlay */}
       {isMobile && menuOpen ? (
-        <button
-          onClick={() => setMenuOpen(false)}
-          aria-label="Close menu overlay"
-          style={styles.overlay}
-        />
+        <button onClick={() => setMenuOpen(false)} aria-label="Close menu overlay" style={styles.overlay} />
       ) : null}
 
       {/* Topbar */}
@@ -492,14 +557,7 @@ export default function CreatePage() {
                       {fmtDate(j.created_at)}
                     </div>
                     {String(j.status || "").toLowerCase() === "failed" && j.error ? (
-                      <div
-                        style={{
-                          marginTop: 6,
-                          color: "rgba(255,120,120,0.95)",
-                          fontSize: 12,
-                          lineHeight: 1.35,
-                        }}
-                      >
+                      <div style={{ marginTop: 6, color: "rgba(255,120,120,0.95)", fontSize: 12, lineHeight: 1.35 }}>
                         {String(j.error).slice(0, 120)}
                       </div>
                     ) : null}
@@ -573,14 +631,7 @@ export default function CreatePage() {
                       {fmtDate(j.created_at)}
                     </div>
                     {String(j.status || "").toLowerCase() === "failed" && j.error ? (
-                      <div
-                        style={{
-                          marginTop: 6,
-                          color: "rgba(255,120,120,0.95)",
-                          fontSize: 12,
-                          lineHeight: 1.35,
-                        }}
-                      >
+                      <div style={{ marginTop: 6, color: "rgba(255,120,120,0.95)", fontSize: 12, lineHeight: 1.35 }}>
                         {String(j.error).slice(0, 120)}
                       </div>
                     ) : null}
@@ -652,6 +703,50 @@ export default function CreatePage() {
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* ✅ Video-Format */}
+              <div style={{ marginTop: 12 }}>
+                <div style={styles.sectionLabel}>Video-Format</div>
+                <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {(["16:9", "9:16", "1:1", "4:5"] as const).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setAspectRatio(r)}
+                      style={sx(styles.pillButton, aspectRatio === r && styles.pillButtonActive)}
+                      aria-pressed={aspectRatio === r}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* ✅ Was soll passieren? */}
+              <div style={{ marginTop: 14 }}>
+                <div style={styles.sectionLabel}>Was soll passieren?</div>
+                <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                  {MOTIONS.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setMotionStyle(m.id)}
+                      style={sx(styles.motionCard, motionStyle === m.id && styles.motionCardActive)}
+                      aria-pressed={motionStyle === m.id}
+                    >
+                      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                        <div style={{ fontSize: 18, lineHeight: 1 }}>{m.emoji}</div>
+                        <div style={{ flex: 1, textAlign: "left" }}>
+                          <div style={{ fontWeight: 950, fontSize: 13 }}>{m.title}</div>
+                          <div style={{ marginTop: 4, fontSize: 12.5, color: "rgba(255,255,255,0.68)", lineHeight: 1.35 }}>
+                            {m.desc}
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <button
@@ -949,6 +1044,43 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 16,
     padding: 16,
     cursor: "pointer",
+  },
+
+  sectionLabel: {
+    fontWeight: 900,
+    fontSize: 12.5,
+    color: "rgba(255,255,255,0.78)",
+  },
+
+  pillButton: {
+    padding: "8px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.04)",
+    color: "rgba(255,255,255,0.85)",
+    fontWeight: 900,
+    fontSize: 12.5,
+    cursor: "pointer",
+  },
+  pillButtonActive: {
+    border: "1px solid rgba(99,102,241,0.55)",
+    background: "rgba(99,102,241,0.16)",
+    color: "rgba(255,255,255,0.95)",
+  },
+
+  motionCard: {
+    width: "100%",
+    textAlign: "left",
+    padding: 12,
+    borderRadius: 16,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.03)",
+    color: "#fff",
+    cursor: "pointer",
+  },
+  motionCardActive: {
+    border: "1px solid rgba(99,102,241,0.50)",
+    background: "rgba(99,102,241,0.12)",
   },
 
   preview: {
