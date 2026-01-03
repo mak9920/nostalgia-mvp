@@ -59,6 +59,22 @@ function motionPrompt(style: string) {
 
   return `${base} ${specific}`;
 }
+function runwayRatioFromAspect(aspect: "16:9" | "9:16" | "1:1" | "4:5") {
+  // Runway erlaubt laut Fehlermeldung:
+  // "1280:720","720:1280","1104:832","832:1104","960:960","1584:672"
+  switch (aspect) {
+    case "16:9":
+      return "1280:720";
+    case "9:16":
+      return "720:1280";
+    case "1:1":
+      return "960:960";
+    case "4:5":
+      // Nächstbestes Portrait-Format, das Runway akzeptiert (≈4:5)
+      return "832:1104";
+  }
+}
+
 
 async function runwayEphemeralUpload(imageBuf: Buffer, filename: string, contentType: string) {
   const apiKey = getRunwayApiKey();
