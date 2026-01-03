@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { ensureDir, getOrderUploadDir } from "@/lib/localUpload";
 import fs from "fs";
 import path from "path";
@@ -8,6 +8,7 @@ import path from "path";
 export async function POST(req: Request) {
   try {
     const form = await req.formData();
+const supabaseAdmin = getSupabaseAdmin();
 
     const orderId = String(form.get("orderId") || "");
     const file = form.get("file");
