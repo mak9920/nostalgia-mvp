@@ -1,18 +1,8 @@
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import fs from "fs";
-import path from "path";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-
-type AspectRatio = "16:9" | "9:16" | "1:1" | "4:5";
-type MotionStyle =
-  | "mystery"
-  | "friendly_wave"
-  | "playful"
-  | "warm_hug"
-  | "sweet_kiss"
-  | "natural_walk"
-  | "blossoming_flowers";
 
 const Body = z.object({
   jobId: z.string().uuid(),
@@ -45,14 +35,7 @@ function getRunwayApiKey() {
   return apiKey;
 }
 
-function runwayRatioFromAspect(aspect: AspectRatio): string {
-  // Runway expects ratio strings like "16:9"
-  // (You currently used "960:960" – that’s basically 1:1. We change to proper ratios.)
-  return aspect;
-}
-
-function motionPrompt(style: MotionStyle): string {
-  // Base guardrails: reduces "random stuff"
+function motionPrompt(style: string) {
   const base =
     "Use the provided image as the single source of truth. " +
     "Do not add new people, objects, text, logos, or background elements. " +
@@ -80,7 +63,6 @@ function motionPrompt(style: MotionStyle): string {
 async function runwayEphemeralUpload(imageBuf: Buffer, filename: string, contentType: string) {
   const apiKey = getRunwayApiKey();
 
-  // 1) Create upload
   const createRes = await fetch(`${RUNWAY_HOST}/v1/uploads`, {
     method: "POST",
     headers: {
@@ -96,9 +78,7 @@ async function runwayEphemeralUpload(imageBuf: Buffer, filename: string, content
   });
 
   const createJson: any = await createRes.json();
-  if (!createRes.ok) {
-    throw new Error(`Runway upload create failed: ${JSON.stringify(createJson)}`);
-  }
+  if (!createRes.ok) throw new Error(`Runway upload create failed: ${JSON.stringify(createJson)}`);
 
   const uploadUrl = createJson.uploadUrl;
   const fields = createJson.fields;
@@ -108,7 +88,6 @@ async function runwayEphemeralUpload(imageBuf: Buffer, filename: string, content
     throw new Error("Runway upload response missing uploadUrl/fields/runwayUri");
   }
 
-  // 2) Presigned POST to S3
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
   const bytes = new Uint8Array(imageBuf);
@@ -126,7 +105,6 @@ async function runwayEphemeralUpload(imageBuf: Buffer, filename: string, content
 async function runwayImageToVideo(runwayImageUri: string, promptText: string, ratio: string) {
   const apiKey = getRunwayApiKey();
 
-  // Create task
   const createRes = await fetch(`${RUNWAY_HOST}/v1/image_to_video`, {
     method: "POST",
     headers: {
@@ -139,7 +117,7 @@ async function runwayImageToVideo(runwayImageUri: string, promptText: string, ra
       promptImage: runwayImageUri,
       promptText,
       duration: 4,
-      ratio,
+      ratio, // e.g. "16:9"
     }),
   });
 
@@ -149,7 +127,6 @@ async function runwayImageToVideo(runwayImageUri: string, promptText: string, ra
   const taskId = job.id;
   if (!taskId) throw new Error("No task id returned from runway");
 
-  // Poll
   while (true) {
     await sleep(5000);
 
@@ -171,16 +148,11 @@ async function runwayImageToVideo(runwayImageUri: string, promptText: string, ra
 export async function POST(req: Request) {
   const json = await req.json().catch(() => null);
   const parsed = Body.safeParse(json);
-
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
-  }
+  if (!parsed.success) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
 
   const { jobId } = parsed.data;
-
-  // Defaults, falls Frontend mal nichts sendet
-  const aspectRatio = (parsed.data.aspectRatio ?? "16:9") as AspectRatio;
-  const motionStyle = (parsed.data.motionStyle ?? "mystery") as MotionStyle;
+  const aspectRatio = parsed.data.aspectRatio ?? "16:9";
+  const motionStyle = parsed.data.motionStyle ?? "mystery";
 
   // Job laden
   const { data: job, error: jobErr } = await supabaseAdmin
@@ -189,63 +161,27 @@ export async function POST(req: Request) {
     .eq("id", jobId)
     .single();
 
-  if (jobErr || !job) {
-    return NextResponse.json({ error: "Job not found" }, { status: 404 });
-  }
+  if (jobErr || !job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+  if (job.status === "done") return NextResponse.json({ ok: true, job, note: "Already done" });
+  if (job.status === "processing") return NextResponse.json({ error: "Job is already processing" }, { status: 409 });
 
-  // Schutz: nicht doppelt verarbeiten
-  if (job.status === "done") {
-    return NextResponse.json({ ok: true, job, note: "Already done" });
-  }
-  if (job.status === "processing") {
-    return NextResponse.json({ error: "Job is already processing" }, { status: 409 });
-  }
-
-  // ✅ Status setzen + neue Felder persistieren
   await supabaseAdmin
     .from("media_jobs")
-    .update({
-      status: "processing",
-      error: null,
-      aspect_ratio: aspectRatio,
-      motion_style: motionStyle,
-    })
+    .update({ status: "processing", error: null, aspect_ratio: aspectRatio, motion_style: motionStyle })
     .eq("id", jobId);
 
   try {
-    // Input ist relativ zu /public (z.B. uploads/<orderId>/<file>.jpg)
-    const inputPath = path.join(process.cwd(), "public", job.input_image_key);
+    // ✅ Input aus Supabase Storage laden
+    const { data: dl, error: dlErr } = await supabaseAdmin.storage.from("uploads").download(job.input_image_key);
+    if (dlErr || !dl) throw new Error(`Storage download failed: ${dlErr?.message || "no data"}`);
 
-    if (!fs.existsSync(inputPath)) {
-      throw new Error(`Input file not found: ${inputPath}`);
-    }
+    const imageBuf = Buffer.from(await dl.arrayBuffer());
+    const runwayUri = await runwayEphemeralUpload(imageBuf, "input.jpg", "image/jpeg");
 
-    // Output-Ordner
-    const outDir = path.join(process.cwd(), "public", "uploads", String(job.order_id));
-    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-
-    const outputKey = `uploads/${job.order_id}/output_${Date.now()}.mp4`;
-    const outputPath = path.join(process.cwd(), "public", outputKey);
-
-    // 1) Bild laden
-    const imageBuf = fs.readFileSync(inputPath);
-
-    // 2) Ephemeral Upload zu Runway
-    const ext = path.extname(inputPath).toLowerCase();
-    const contentType =
-      ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
-
-    const runwayUri = await runwayEphemeralUpload(imageBuf, `input${ext || ".jpg"}`, contentType);
-
-    // 3) AI Video generieren (✅ ratio + prompt aus UI)
     const promptText = motionPrompt(motionStyle);
-    const ratio = runwayRatioFromAspect(aspectRatio);
+    const result = await runwayImageToVideo(runwayUri, promptText, aspectRatio);
 
-    const result = await runwayImageToVideo(runwayUri, promptText, ratio);
-
-    // 4) Output Video URL auslesen
     const out0 = Array.isArray(result.output) ? result.output[0] : null;
-
     const videoUrl =
       typeof out0 === "string"
         ? out0
@@ -257,16 +193,18 @@ export async function POST(req: Request) {
       throw new Error(`No output video URL in runway result: ${JSON.stringify(result.output)}`);
     }
 
-    // 5) MP4 downloaden und speichern
+    // Video downloaden
     const vidRes = await fetch(videoUrl);
     if (!vidRes.ok) throw new Error(`Failed to download video: ${vidRes.status}`);
+    const mp4Buf = Buffer.from(await vidRes.arrayBuffer());
 
-    const arr = new Uint8Array(await vidRes.arrayBuffer());
-    fs.writeFileSync(outputPath, arr);
-
-    if (!fs.existsSync(outputPath)) {
-      throw new Error(`Output MP4 wurde nicht erstellt: ${outputPath}`);
-    }
+    // ✅ Output in Supabase Storage speichern
+    const outputKey = `uploads/${job.order_id}/output_${Date.now()}.mp4`;
+    const { error: upErr } = await supabaseAdmin.storage.from("uploads").upload(outputKey, mp4Buf, {
+      contentType: "video/mp4",
+      upsert: true,
+    });
+    if (upErr) throw new Error(`Storage upload mp4 failed: ${upErr.message}`);
 
     // DB updaten
     const { data: updated, error: updErr } = await supabaseAdmin
@@ -278,23 +216,14 @@ export async function POST(req: Request) {
         finished_at: new Date().toISOString(),
       })
       .eq("id", jobId)
-      .select("id,status,output_video_key,finished_at,aspect_ratio,motion_style")
+      .select("id,status,output_video_key,finished_at")
       .single();
 
-    if (updErr || !updated) {
-      throw new Error("Failed to update job in DB");
-    }
+    if (updErr || !updated) throw new Error("Failed to update job in DB");
 
     return NextResponse.json({ ok: true, job: updated });
   } catch (e: any) {
-    await supabaseAdmin
-      .from("media_jobs")
-      .update({ status: "failed", error: String(e?.message || e) })
-      .eq("id", jobId);
-
-    return NextResponse.json(
-      { error: "Job failed", details: String(e?.message || e) },
-      { status: 500 }
-    );
+    await supabaseAdmin.from("media_jobs").update({ status: "failed", error: String(e?.message || e) }).eq("id", jobId);
+    return NextResponse.json({ error: "Job failed", details: String(e?.message || e) }, { status: 500 });
   }
 }
