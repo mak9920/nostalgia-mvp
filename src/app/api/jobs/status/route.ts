@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const jobId = searchParams.get("jobId");
+const supabaseAdmin = getSupabaseAdmin();
 
   if (!jobId) {
     return NextResponse.json({ error: "Missing jobId" }, { status: 400 });
