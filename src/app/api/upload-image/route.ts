@@ -3,15 +3,94 @@ import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { ensureDir, getOrderUploadDir } from "@/lib/localUpload";
 import fs from "fs";
 import path from "path";
+import sharp from "sharp";
+
+type AspectRatio = "16:9" | "9:16" | "1:1" | "4:5";
+type MotionStyle =
+  | "mystery"
+  | "friendly_wave"
+  | "playful"
+  | "warm_hug"
+  | "sweet_kiss"
+  | "natural_walk"
+  | "blossoming_flowers";
+
+const ALLOWED_RATIOS: AspectRatio[] = ["16:9", "9:16", "1:1", "4:5"];
+const ALLOWED_MOTIONS: MotionStyle[] = [
+  "mystery",
+  "friendly_wave",
+  "playful",
+  "warm_hug",
+  "sweet_kiss",
+  "natural_walk",
+  "blossoming_flowers",
+];
+
+function parseAspectRatio(v: unknown): AspectRatio {
+  const s = String(v || "").trim() as AspectRatio;
+  return ALLOWED_RATIOS.includes(s) ? s : "16:9";
+}
+
+function parseMotionStyle(v: unknown): MotionStyle {
+  const s = String(v || "").trim() as MotionStyle;
+  return ALLOWED_MOTIONS.includes(s) ? s : "mystery";
+}
+
+function targetSizeForRatio(r: AspectRatio) {
+  // Solide Defaults: nicht riesig, aber genug Details für AI
+  switch (r) {
+    case "16:9":
+      return { w: 1280, h: 720 };
+    case "9:16":
+      return { w: 720, h: 1280 };
+    case "1:1":
+      return { w: 960, h: 960 };
+    case "4:5":
+      return { w: 960, h: 1200 };
+  }
+}
+
+async function makeLetterboxedImage(input: Buffer, ratio: AspectRatio) {
+  const { w, h } = targetSizeForRatio(ratio);
+
+  // Hintergrund: Bild "cover" + blur
+  const bg = await sharp(input)
+    .rotate()
+    .resize(w, h, { fit: "cover" })
+    .blur(18)
+    .modulate({ brightness: 0.9, saturation: 0.9 })
+    .toBuffer();
+
+  // Vordergrund: Bild "contain" (keine Crops), leicht “eingepasst”
+  const fg = await sharp(input)
+    .rotate()
+    .resize(w, h, {
+      fit: "contain",
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .toBuffer();
+
+  // Zusammensetzen: bg + fg
+  const out = await sharp(bg)
+    .composite([{ input: fg, top: 0, left: 0 }])
+    .jpeg({ quality: 92 })
+    .toBuffer();
+
+  return out;
+}
 
 // Wichtig: Next.js App Router kann Request.formData() nativ!
 export async function POST(req: Request) {
   try {
     const form = await req.formData();
-const supabaseAdmin = getSupabaseAdmin();
+    const supabaseAdmin = getSupabaseAdmin();
 
     const orderId = String(form.get("orderId") || "");
     const file = form.get("file");
+
+    // ✅ neue Felder aus FormData
+    const aspectRatio = parseAspectRatio(form.get("aspectRatio"));
+    const motionStyle = parseMotionStyle(form.get("motionStyle"));
 
     if (!orderId) {
       return NextResponse.json({ error: "Missing orderId" }, { status: 400 });
@@ -43,26 +122,39 @@ const supabaseAdmin = getSupabaseAdmin();
     const uploadDir = getOrderUploadDir(orderId);
     ensureDir(uploadDir);
 
+    // Original speichern (optional, aber hilfreich fürs Debuggen)
     const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
     const safeExt = ext.replace(/[^a-z0-9]/g, "") || "jpg";
-    const fileName = `${Date.now()}_${Math.random().toString(16).slice(2)}.${safeExt}`;
-    const filePath = path.join(uploadDir, fileName);
+    const originalName = `orig_${Date.now()}_${Math.random().toString(16).slice(2)}.${safeExt}`;
+    const originalPath = path.join(uploadDir, originalName);
 
-    // File speichern
     const arrayBuffer = await file.arrayBuffer();
-    fs.writeFileSync(filePath, Buffer.from(arrayBuffer));
+    const originalBuf = Buffer.from(arrayBuffer);
 
-    const relativePath = `uploads/${orderId}/${fileName}`;
+    fs.writeFileSync(originalPath, originalBuf);
 
-    // media_jobs anlegen
+    // ✅ Preprocessing: contain/letterbox in gewünschtes Format
+    const preparedBuf = await makeLetterboxedImage(originalBuf, aspectRatio);
+
+    // Prepared speichern (Runway soll dieses Bild bekommen)
+    const preparedName = `prep_${Date.now()}_${Math.random().toString(16).slice(2)}.jpg`;
+    const preparedPath = path.join(uploadDir, preparedName);
+    fs.writeFileSync(preparedPath, preparedBuf);
+
+    // Job soll mit PREP Bild arbeiten:
+    const relativePreparedPath = `uploads/${orderId}/${preparedName}`;
+
+    // media_jobs anlegen (✅ neue Felder speichern)
     const { data: job, error: jobErr } = await supabaseAdmin
       .from("media_jobs")
       .insert({
         order_id: orderId,
-        input_image_key: relativePath,
+        input_image_key: relativePreparedPath,
         status: "queued",
+        aspect_ratio: aspectRatio,
+        motion_style: motionStyle,
       })
-      .select("id, status, input_image_key")
+      .select("id, status, input_image_key, aspect_ratio, motion_style")
       .single();
 
     if (jobErr || !job) {
@@ -74,6 +166,9 @@ const supabaseAdmin = getSupabaseAdmin();
       job,
     });
   } catch (e: any) {
-    return NextResponse.json({ error: "Upload failed", details: String(e?.message || e) }, { status: 500 });
+    return NextResponse.json(
+      { error: "Upload failed", details: String(e?.message || e) },
+      { status: 500 }
+    );
   }
 }
