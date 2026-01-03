@@ -173,4 +173,128 @@ export async function POST(req: Request) {
   const parsed = Body.safeParse(json);
 
   if (!parsed.success) {
-    return NextResp
+    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+  }
+
+  const { jobId } = parsed.data;
+
+  // Defaults, falls Frontend mal nichts sendet
+  const aspectRatio = (parsed.data.aspectRatio ?? "16:9") as AspectRatio;
+  const motionStyle = (parsed.data.motionStyle ?? "mystery") as MotionStyle;
+
+  // Job laden
+  const { data: job, error: jobErr } = await supabaseAdmin
+    .from("media_jobs")
+    .select("id, order_id, input_image_key, status")
+    .eq("id", jobId)
+    .single();
+
+  if (jobErr || !job) {
+    return NextResponse.json({ error: "Job not found" }, { status: 404 });
+  }
+
+  // Schutz: nicht doppelt verarbeiten
+  if (job.status === "done") {
+    return NextResponse.json({ ok: true, job, note: "Already done" });
+  }
+  if (job.status === "processing") {
+    return NextResponse.json({ error: "Job is already processing" }, { status: 409 });
+  }
+
+  // ✅ Status setzen + neue Felder persistieren
+  await supabaseAdmin
+    .from("media_jobs")
+    .update({
+      status: "processing",
+      error: null,
+      aspect_ratio: aspectRatio,
+      motion_style: motionStyle,
+    })
+    .eq("id", jobId);
+
+  try {
+    // Input ist relativ zu /public (z.B. uploads/<orderId>/<file>.jpg)
+    const inputPath = path.join(process.cwd(), "public", job.input_image_key);
+
+    if (!fs.existsSync(inputPath)) {
+      throw new Error(`Input file not found: ${inputPath}`);
+    }
+
+    // Output-Ordner
+    const outDir = path.join(process.cwd(), "public", "uploads", String(job.order_id));
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+
+    const outputKey = `uploads/${job.order_id}/output_${Date.now()}.mp4`;
+    const outputPath = path.join(process.cwd(), "public", outputKey);
+
+    // 1) Bild laden
+    const imageBuf = fs.readFileSync(inputPath);
+
+    // 2) Ephemeral Upload zu Runway
+    const ext = path.extname(inputPath).toLowerCase();
+    const contentType =
+      ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+
+    const runwayUri = await runwayEphemeralUpload(imageBuf, `input${ext || ".jpg"}`, contentType);
+
+    // 3) AI Video generieren (✅ ratio + prompt aus UI)
+    const promptText = motionPrompt(motionStyle);
+    const ratio = runwayRatioFromAspect(aspectRatio);
+
+    const result = await runwayImageToVideo(runwayUri, promptText, ratio);
+
+    // 4) Output Video URL auslesen
+    const out0 = Array.isArray(result.output) ? result.output[0] : null;
+
+    const videoUrl =
+      typeof out0 === "string"
+        ? out0
+        : out0 && typeof out0 === "object" && "url" in out0
+        ? (out0 as any).url
+        : null;
+
+    if (!videoUrl || typeof videoUrl !== "string") {
+      throw new Error(`No output video URL in runway result: ${JSON.stringify(result.output)}`);
+    }
+
+    // 5) MP4 downloaden und speichern
+    const vidRes = await fetch(videoUrl);
+    if (!vidRes.ok) throw new Error(`Failed to download video: ${vidRes.status}`);
+
+    const arr = new Uint8Array(await vidRes.arrayBuffer());
+    fs.writeFileSync(outputPath, arr);
+
+    if (!fs.existsSync(outputPath)) {
+      throw new Error(`Output MP4 wurde nicht erstellt: ${outputPath}`);
+    }
+
+    // DB updaten
+    const { data: updated, error: updErr } = await supabaseAdmin
+      .from("media_jobs")
+      .update({
+        status: "done",
+        output_video_key: outputKey,
+        output_video_url: null,
+        finished_at: new Date().toISOString(),
+      })
+      .eq("id", jobId)
+      .select("id,status,output_video_key,finished_at,aspect_ratio,motion_style")
+      .single();
+
+    if (updErr || !updated) {
+      throw new Error("Failed to update job in DB");
+    }
+
+    return NextResponse.json({ ok: true, job: updated });
+  } catch (e: any) {
+    await supabaseAdmin
+      .from("media_jobs")
+      .update({ status: "failed", error: String(e?.message || e) })
+      .eq("id", jobId);
+
+    return NextResponse.json(
+      { error: "Job failed", details: String(e?.message || e) },
+      { status: 500 }
+    );
+  }
+}
