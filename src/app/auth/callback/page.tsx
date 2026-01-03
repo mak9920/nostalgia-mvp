@@ -16,23 +16,20 @@ export default function AuthCallbackPage() {
 
   useEffect(() => {
     (async () => {
-      try {
-        const url = new URL(window.location.href);
+      const url = new URL(window.location.href);
+      const next = url.searchParams.get("next") || "/create"; // default: /create
 
-        // 1) Code Flow (PKCE) -> code ist in der Query
-        const code = url.searchParams.get("code");
-        if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          router.replace(error ? "/login?error=1" : "/");
-          return;
-        }
-
-        // 2) Implicit Flow / Hash Tokens -> Session auslesen
-        const { data, error } = await supabase.auth.getSession();
-        router.replace(error || !data.session ? "/login?error=1" : "/");
-      } catch {
-        router.replace("/login?error=1");
+      // PKCE code flow
+      const code = url.searchParams.get("code");
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        router.replace(error ? "/login?error=1" : next);
+        return;
       }
+
+      // fallback (hash / existing session)
+      const { data, error } = await supabase.auth.getSession();
+      router.replace(error || !data.session ? "/login?error=1" : next);
     })();
   }, [router]);
 
