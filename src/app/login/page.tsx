@@ -22,7 +22,8 @@ export default function LoginPage() {
 
  const redirectTo = `${window.location.origin}/auth/callback?next=/create`;
 
-
+console.log("emailRedirectTo =", redirectTo);
+alert("emailRedirectTo = " + redirectTo);
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
