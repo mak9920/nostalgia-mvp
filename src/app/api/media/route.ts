@@ -1,27 +1,20 @@
-import fs from "fs";
-import path from "path";
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const filePath = searchParams.get("path");
+  const url = new URL(req.url);
+  const p = url.searchParams.get("path");
+  if (!p) return NextResponse.json({ error: "Missing path" }, { status: 400 });
 
-  if (!filePath) {
-    return NextResponse.json({ error: "Missing path" }, { status: 400 });
+  const supabaseAdmin = getSupabaseAdmin();
+
+  const { data, error } = await supabaseAdmin.storage.from("uploads").createSignedUrl(p, 60);
+  if (error || !data?.signedUrl) {
+    return NextResponse.json({ error: "Could not sign url", details: error?.message }, { status: 500 });
   }
 
-  const absolutePath = path.join(process.cwd(), filePath);
-
-  if (!fs.existsSync(absolutePath)) {
-    return NextResponse.json({ error: "File not found" }, { status: 404 });
-  }
-
-  const file = fs.readFileSync(absolutePath);
-
-  return new NextResponse(file, {
-    headers: {
-      "Content-Type": "video/mp4",
-      "Content-Length": file.length.toString(),
-    },
-  });
+  // Redirect auf signed URL (Video Tag kann das abspielen)
+  return NextResponse.redirect(data.signedUrl);
 }
