@@ -13,6 +13,8 @@ type JobRow = {
   output_video_key: string | null;
   created_at?: string | null;
   error?: string | null;
+  aspect_ratio?: string | null;
+  motion_style?: string | null;
 };
 
 type AspectRatio = "16:9" | "9:16" | "1:1" | "4:5";
@@ -268,7 +270,7 @@ export default function CreatePage() {
   async function loadJobs() {
     const { data, error } = await supabase
       .from("media_jobs")
-      .select("id,status,input_image_key,output_video_key,created_at,error")
+      .select("id,status,input_image_key,output_video_key,created_at,error,aspect_ratio,motion_style")
       .order("created_at", { ascending: false })
       .limit(25);
 
