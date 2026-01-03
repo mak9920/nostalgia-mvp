@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 const BodySchema = z.object({
   email: z.string().email(),
@@ -10,6 +10,7 @@ const BodySchema = z.object({
 export async function POST(req: Request) {
   const json = await req.json().catch(() => null);
   const parsed = BodySchema.safeParse(json);
+const supabaseAdmin = getSupabaseAdmin();
 
   if (!parsed.success) {
     return NextResponse.json(
