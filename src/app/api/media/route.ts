@@ -9,7 +9,7 @@ const Q = z.object({
 });
 
 function normalizeStoragePath(p: string) {
-  // akzeptiere sowohl "uploads/<orderId>/file.mp4" als auch "<orderId>/file.mp4"
+  // erlaubt sowohl "uploads/<orderId>/file.mp4" als auch "<orderId>/file.mp4"
   const s = p.replace(/^\/+/, "");
   return s.startsWith("uploads/") ? s.slice("uploads/".length) : s;
 }
@@ -22,8 +22,7 @@ export async function GET(req: Request) {
   const storagePath = normalizeStoragePath(parsed.data.path);
   const supabaseAdmin = getSupabaseAdmin();
 
-  const { data, error } = await supabaseAdmin
-    .storage
+  const { data, error } = await supabaseAdmin.storage
     .from("uploads")
     .createSignedUrl(storagePath, 60 * 60); // 1h
 
