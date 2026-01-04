@@ -40,25 +40,27 @@ function motionPrompt(style: string) {
     "Use the provided image as the single source of truth. " +
     "Do not add new people, objects, text, logos, or background elements. " +
     "Do not change identity, face, clothing, or environment. " +
-    "Keep motion subtle, natural, and realistic.";
+    "Keep the camera locked: no zoom, no pan, no tilt, no dolly. " +
+    "Animate only the subject with realistic small movements (blink, breathing).";
 
   const specific =
     style === "friendly_wave"
-      ? "Add a gentle friendly wave. Keep it minimal and natural."
+      ? "The main subject performs a gentle friendly wave with one hand. Keep it natural and clearly visible."
       : style === "playful"
-      ? "Add subtle playful motion (small joyful micro-movements)."
+      ? "Add subtle playful motion (small joyful micro-movements, slight smile)."
       : style === "warm_hug"
       ? "Add a calm warm hug gesture. Keep it subtle and tasteful."
       : style === "sweet_kiss"
       ? "Add a very subtle sweet kiss gesture. Keep it tasteful and minimal."
       : style === "natural_walk"
-      ? "Add calm lifelike motion as if slowly walking through time."
+      ? "Add calm lifelike body motion as if slowly walking. Keep background stable."
       : style === "blossoming_flowers"
-      ? "Add gentle blossoming flowers or soft particles around the subject. Do not cover faces."
-      : "Choose the best fitting subtle motion for the photo.";
+      ? "Add gentle, minimal blossoming flower particles around the subject. Do not cover faces."
+      : "Choose the best fitting subtle motion for the photo. No camera movement.";
 
   return `${base} ${specific}`;
 }
+
 function runwayRatioFromAspect(aspect: "16:9" | "9:16" | "1:1" | "4:5") {
   // Runway erlaubt laut Fehlermeldung:
   // "1280:720","720:1280","1104:832","832:1104","960:960","1584:672"
