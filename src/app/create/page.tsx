@@ -100,8 +100,6 @@ function fmtDate(iso?: string | null) {
 function resolveVideoUrl(outputKey: string) {
   if (!outputKey) return "";
   if (outputKey.startsWith("http")) return outputKey;
-  if (outputKey.startsWith("/uploads/")) return outputKey;
-  if (outputKey.startsWith("uploads/")) return `/${outputKey}`;
   return `/api/media?path=${encodeURIComponent(outputKey)}`;
 }
 
