@@ -28,48 +28,13 @@ type MotionStyle =
   | "blossoming_flowers";
 
 const MOTIONS: Array<{ id: MotionStyle; title: string; desc: string; emoji: string }> = [
-  {
-    id: "mystery",
-    title: "Mystery Motion",
-    desc: "AI wählt die passende subtile Bewegung.",
-    emoji: "🪄",
-  },
-  {
-    id: "friendly_wave",
-    title: "Friendly Wave",
-    desc: "Natürliche, herzliche Handbewegung.",
-    emoji: "👋",
-  },
-  {
-    id: "playful",
-    title: "Playful Motion",
-    desc: "Leicht verspielt, fröhlich.",
-    emoji: "🎈",
-  },
-  {
-    id: "warm_hug",
-    title: "Warm Hug",
-    desc: "Sanfte Nähe, ruhige Umarmung.",
-    emoji: "🫂",
-  },
-  {
-    id: "sweet_kiss",
-    title: "Sweet Kiss",
-    desc: "Zart, romantisch, sehr dezent.",
-    emoji: "💋",
-  },
-  {
-    id: "natural_walk",
-    title: "Natural Walk",
-    desc: "Ruhige, natürliche Bewegung.",
-    emoji: "🚶",
-  },
-  {
-    id: "blossoming_flowers",
-    title: "Blossoming Flowers",
-    desc: "Sanfte Blumen oder Partikel um das Motiv.",
-    emoji: "🌸",
-  },
+  { id: "mystery", title: "Mystery Motion", desc: "AI wählt die passende subtile Bewegung.", emoji: "🪄" },
+  { id: "friendly_wave", title: "Friendly Wave", desc: "Natürliche, herzliche Handbewegung.", emoji: "👋" },
+  { id: "playful", title: "Playful Motion", desc: "Leicht verspielt, fröhlich.", emoji: "🎈" },
+  { id: "warm_hug", title: "Warm Hug", desc: "Sanfte Nähe, ruhige Umarmung.", emoji: "🫂" },
+  { id: "sweet_kiss", title: "Sweet Kiss", desc: "Zart, romantisch, sehr dezent.", emoji: "💋" },
+  { id: "natural_walk", title: "Natural Walk", desc: "Ruhige, natürliche Bewegung.", emoji: "🚶" },
+  { id: "blossoming_flowers", title: "Blossoming Flowers", desc: "Sanfte Blumen oder Partikel um das Motiv.", emoji: "🌸" },
 ];
 
 const supabase = createClient(
@@ -91,11 +56,7 @@ function fmtDate(iso?: string | null) {
 }
 
 /**
- * Video URL resolver:
- * - "uploads/..." => "/uploads/..."
- * - "/uploads/..." => bleibt
- * - "http..." => bleibt
- * - sonst fallback: /api/media?path=...
+ * Video URL resolver: wir holen über /api/media?path=... (Supabase storage signed url / proxy)
  */
 function resolveVideoUrl(outputKey: string) {
   if (!outputKey) return "";
@@ -143,6 +104,7 @@ function StatusPill({ status }: { status: string }) {
         color: tx,
         fontSize: 11.5,
         fontWeight: 900,
+        whiteSpace: "nowrap",
       }}
     >
       {status}
@@ -182,6 +144,7 @@ function StepPill({ label, state }: { label: string; state: "idle" | "active" | 
         color: tx,
         fontSize: 12,
         fontWeight: 900,
+        whiteSpace: "nowrap",
       }}
     >
       {label}
@@ -207,6 +170,20 @@ function primaryButtonStyle(disabled: boolean): React.CSSProperties {
   };
 }
 
+function dangerButtonStyle(): React.CSSProperties {
+  return {
+    width: "100%",
+    padding: "12px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.04)",
+    color: "rgba(255,255,255,0.90)",
+    fontWeight: 950,
+    fontSize: 13.5,
+    cursor: "pointer",
+  };
+}
+
 export default function CreatePage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -223,7 +200,6 @@ export default function CreatePage() {
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [activeJob, setActiveJob] = useState<JobRow | null>(null);
 
-  // ✅ neue Settings (Default 16:9, Mystery)
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
   const [motionStyle, setMotionStyle] = useState<MotionStyle>("mystery");
 
@@ -247,6 +223,7 @@ export default function CreatePage() {
     setStatusText("");
     setJobError(null);
     setJobId(null);
+    // ActiveJob lassen wir bewusst, damit man parallel noch Preview sieht
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -256,9 +233,21 @@ export default function CreatePage() {
     maxSize: 15 * 1024 * 1024,
   });
 
-  const canSubmit = useMemo(() => {
-    return !!file && (uiState === "idle" || uiState === "error");
-  }, [file, uiState]);
+  const canSubmit = useMemo(() => !!file && (uiState === "idle" || uiState === "error"), [file, uiState]);
+
+  // ✅ “Neues Projekt”: alles zurücksetzen, ohne deine Job-History zu verlieren
+  function newProject() {
+    setFile(null);
+    setUiState("idle");
+    setStatusText("");
+    setJobError(null);
+    setJobId(null);
+    setAspectRatio("16:9");
+    setMotionStyle("mystery");
+    // Preview bewusst NICHT löschen, damit man das letzte Resultat noch sieht.
+    // Falls du es doch willst: setActiveJob(null);
+    if (isMobile) setMenuOpen(false);
+  }
 
   async function logout() {
     await supabase.auth.signOut();
@@ -284,6 +273,50 @@ export default function CreatePage() {
       }
       return rows.find((r) => r.status === "done" && r.output_video_key) || rows[0] || null;
     });
+  }
+
+  function selectJob(j: JobRow) {
+    setActiveJob(j);
+
+    // wenn ein Job angeklickt wird: Settings auf Job zurücksetzen (nice UX)
+    if (j.aspect_ratio === "16:9" || j.aspect_ratio === "9:16" || j.aspect_ratio === "1:1" || j.aspect_ratio === "4:5") {
+      setAspectRatio(j.aspect_ratio as AspectRatio);
+    }
+    if (
+      j.motion_style === "mystery" ||
+      j.motion_style === "friendly_wave" ||
+      j.motion_style === "playful" ||
+      j.motion_style === "warm_hug" ||
+      j.motion_style === "sweet_kiss" ||
+      j.motion_style === "natural_walk" ||
+      j.motion_style === "blossoming_flowers"
+    ) {
+      setMotionStyle(j.motion_style as MotionStyle);
+    }
+
+    const st = String(j.status || "").toLowerCase();
+    if (st === "processing" || st === "running" || st === "queued") {
+      setJobId(j.id);
+      setUiState("processing");
+      setStatusText("Video wird erstellt …");
+    } else if (st === "done") {
+      setJobId(null);
+      setUiState("done");
+      setStatusText("Fertig.");
+      setJobError(null);
+    } else if (st === "failed") {
+      setJobId(null);
+      setUiState("error");
+      setStatusText("Job fehlgeschlagen.");
+      setJobError(j.error || null);
+    } else {
+      setJobId(null);
+      setUiState("idle");
+      setStatusText("");
+      setJobError(null);
+    }
+
+    if (isMobile) setMenuOpen(false);
   }
 
   // Auth init
@@ -319,7 +352,6 @@ export default function CreatePage() {
     setStatusText("Upload läuft …");
     setJobError(null);
 
-    // ✅ sendet aspectRatio + motionStyle mit (du musst im Backend dann übernehmen)
     const orderRes = await fetch("/api/orders/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -343,7 +375,6 @@ export default function CreatePage() {
     const fd = new FormData();
     fd.append("orderId", orderId);
     fd.append("file", file);
-    // ✅ auch im Upload mitschicken (falls du dort preprocess machst)
     fd.append("aspectRatio", aspectRatio);
     fd.append("motionStyle", motionStyle);
 
@@ -353,6 +384,7 @@ export default function CreatePage() {
     if (!upRes.ok) {
       setUiState("error");
       setStatusText(upJson?.error || "Upload Fehler");
+      setJobError(upJson?.details || null);
       return;
     }
 
@@ -362,7 +394,6 @@ export default function CreatePage() {
     setUiState("processing");
     setStatusText("Video wird erstellt …");
 
-    // ✅ auch beim Run mitschicken (falls prompt/ratio dort gebaut wird)
     const runRes = await fetch("/api/jobs/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -377,6 +408,7 @@ export default function CreatePage() {
       return;
     }
 
+    // wenn run direkt done returned
     if (runJson?.job?.output_video_key) {
       setActiveJob({
         id: runJson.job.id,
@@ -385,6 +417,8 @@ export default function CreatePage() {
         output_video_key: runJson.job.output_video_key ?? null,
         created_at: runJson.job.created_at ?? null,
         error: runJson.job.error ?? null,
+        aspect_ratio: runJson.job.aspect_ratio ?? null,
+        motion_style: runJson.job.motion_style ?? null,
       });
       setUiState("done");
       setStatusText("Fertig.");
@@ -412,9 +446,12 @@ export default function CreatePage() {
           output_video_key: json.job.output_video_key ?? null,
           created_at: json.job.created_at ?? null,
           error: json.job.error ?? null,
+          aspect_ratio: json.job.aspect_ratio ?? null,
+          motion_style: json.job.motion_style ?? null,
         });
         setUiState("done");
         setStatusText("Fertig.");
+        setJobError(null);
         await loadJobs();
         clearInterval(t);
       } else if (st === "failed") {
@@ -452,17 +489,72 @@ export default function CreatePage() {
     );
   }
 
-  const sidebarStyle = sx(
-    styles.sidebar,
-    isMobile && styles.sidebarMobile,
-    isMobile && menuOpen && styles.sidebarMobileOpen
-  );
-
-  // ✅ Responsive: Shell + Content Grid dynamisch
   const shellStyle = sx(styles.shell, isMobile && styles.shellMobile);
   const contentGridStyle = sx(styles.contentGrid, isMobile && styles.contentGridMobile);
   const heroTitleStyle = sx(styles.heroTitle, isMobile && styles.heroTitleMobile);
   const previewStyle = sx(styles.preview, isMobile && styles.previewMobile);
+
+  // Sidebar Content als “Komponente” (wird in Desktop Sidebar und Mobile Drawer benutzt)
+  const SidebarContent = (
+    <>
+      <div style={styles.sidebarHeader}>
+        <div style={{ fontWeight: 900, letterSpacing: 0.2 }}>My Projects</div>
+        {isMobile ? (
+          <button onClick={() => setMenuOpen(false)} style={styles.iconButtonSm} aria-label="Close">
+            ✕
+          </button>
+        ) : null}
+      </div>
+
+      <div style={styles.sidebarBody}>
+        <button onClick={newProject} style={styles.newProjectButton} type="button">
+          ＋ Neues Projekt
+        </button>
+
+        <div style={styles.sidebarList}>
+          {jobs.length === 0 ? (
+            <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 13, padding: 10 }}>
+              Noch keine Projekte. Erstelle dein erstes Video.
+            </div>
+          ) : (
+            jobs.map((j) => (
+              <button
+                key={j.id}
+                onClick={() => selectJob(j)}
+                style={sx(styles.jobRow, activeJob?.id === j.id && styles.jobRowActive)}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                  <div style={{ fontWeight: 900, fontSize: 13 }}>#{j.id.slice(0, 8)}</div>
+                  <StatusPill status={j.status} />
+                </div>
+                <div style={{ marginTop: 6, color: "rgba(255,255,255,0.65)", fontSize: 12 }}>
+                  {fmtDate(j.created_at)}
+                </div>
+                {String(j.status || "").toLowerCase() === "failed" && j.error ? (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      color: "rgba(255,120,120,0.95)",
+                      fontSize: 12,
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    {String(j.error).slice(0, 120)}
+                  </div>
+                ) : null}
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div style={styles.sidebarFooter}>
+        <button onClick={() => (window.location.href = "/")} style={styles.ghostButtonFull} title="Zur Landingpage">
+          ← Zur Landingpage
+        </button>
+      </div>
+    </>
+  );
 
   return (
     <main style={styles.page}>
@@ -472,6 +564,13 @@ export default function CreatePage() {
       {/* Mobile overlay */}
       {isMobile && menuOpen ? (
         <button onClick={() => setMenuOpen(false)} aria-label="Close menu overlay" style={styles.overlay} />
+      ) : null}
+
+      {/* Mobile drawer */}
+      {isMobile ? (
+        <aside style={sx(styles.drawer, menuOpen && styles.drawerOpen)} aria-hidden={!menuOpen}>
+          {SidebarContent}
+        </aside>
       ) : null}
 
       {/* Topbar */}
@@ -508,149 +607,8 @@ export default function CreatePage() {
       </header>
 
       <div style={shellStyle}>
-        {/* Sidebar (Desktop) */}
-        {!isMobile ? (
-          <aside style={sidebarStyle}>
-            <div style={styles.sidebarHeader}>
-              <div style={{ fontWeight: 900, letterSpacing: 0.2 }}>My Projects</div>
-            </div>
-
-            <div style={styles.sidebarList}>
-              {jobs.length === 0 ? (
-                <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 13, padding: 10 }}>
-                  Noch keine Projekte. Erstelle dein erstes Video.
-                </div>
-              ) : (
-                jobs.map((j) => (
-                  <button
-                    key={j.id}
-                    onClick={() => {
-                      setActiveJob(j);
-
-                      const st = String(j.status || "").toLowerCase();
-                      if (st === "processing" || st === "running" || st === "queued") {
-                        setJobId(j.id);
-                        setUiState("processing");
-                        setStatusText("Video wird erstellt …");
-                      } else if (st === "done") {
-                        setJobId(null);
-                        setUiState("done");
-                        setStatusText("Fertig.");
-                      } else if (st === "failed") {
-                        setJobId(null);
-                        setUiState("error");
-                        setStatusText("Job fehlgeschlagen.");
-                        setJobError(j.error || null);
-                      } else {
-                        setJobId(null);
-                        setUiState("idle");
-                        setStatusText("");
-                      }
-                    }}
-                    style={sx(styles.jobRow, activeJob?.id === j.id && styles.jobRowActive)}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                      <div style={{ fontWeight: 900, fontSize: 13 }}>#{j.id.slice(0, 8)}</div>
-                      <StatusPill status={j.status} />
-                    </div>
-                    <div style={{ marginTop: 6, color: "rgba(255,255,255,0.65)", fontSize: 12 }}>
-                      {fmtDate(j.created_at)}
-                    </div>
-                    {String(j.status || "").toLowerCase() === "failed" && j.error ? (
-                      <div style={{ marginTop: 6, color: "rgba(255,120,120,0.95)", fontSize: 12, lineHeight: 1.35 }}>
-                        {String(j.error).slice(0, 120)}
-                      </div>
-                    ) : null}
-                  </button>
-                ))
-              )}
-            </div>
-
-            <div style={styles.sidebarFooter}>
-              <button
-                onClick={() => (window.location.href = "/")}
-                style={styles.ghostButtonFull}
-                title="Zur Landingpage"
-              >
-                ← Zur Landingpage
-              </button>
-            </div>
-          </aside>
-        ) : null}
-
-        {/* Sidebar (Mobile overlay) */}
-        {isMobile ? (
-          <aside style={sidebarStyle}>
-            <div style={styles.sidebarHeader}>
-              <div style={{ fontWeight: 900, letterSpacing: 0.2 }}>My Projects</div>
-              <button onClick={() => setMenuOpen(false)} style={styles.iconButtonSm} aria-label="Close">
-                ✕
-              </button>
-            </div>
-
-            <div style={styles.sidebarList}>
-              {jobs.length === 0 ? (
-                <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 13, padding: 10 }}>
-                  Noch keine Projekte. Erstelle dein erstes Video.
-                </div>
-              ) : (
-                jobs.map((j) => (
-                  <button
-                    key={j.id}
-                    onClick={() => {
-                      setActiveJob(j);
-                      setMenuOpen(false);
-
-                      const st = String(j.status || "").toLowerCase();
-                      if (st === "processing" || st === "running" || st === "queued") {
-                        setJobId(j.id);
-                        setUiState("processing");
-                        setStatusText("Video wird erstellt …");
-                      } else if (st === "done") {
-                        setJobId(null);
-                        setUiState("done");
-                        setStatusText("Fertig.");
-                      } else if (st === "failed") {
-                        setJobId(null);
-                        setUiState("error");
-                        setStatusText("Job fehlgeschlagen.");
-                        setJobError(j.error || null);
-                      } else {
-                        setJobId(null);
-                        setUiState("idle");
-                        setStatusText("");
-                      }
-                    }}
-                    style={sx(styles.jobRow, activeJob?.id === j.id && styles.jobRowActive)}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                      <div style={{ fontWeight: 900, fontSize: 13 }}>#{j.id.slice(0, 8)}</div>
-                      <StatusPill status={j.status} />
-                    </div>
-                    <div style={{ marginTop: 6, color: "rgba(255,255,255,0.65)", fontSize: 12 }}>
-                      {fmtDate(j.created_at)}
-                    </div>
-                    {String(j.status || "").toLowerCase() === "failed" && j.error ? (
-                      <div style={{ marginTop: 6, color: "rgba(255,120,120,0.95)", fontSize: 12, lineHeight: 1.35 }}>
-                        {String(j.error).slice(0, 120)}
-                      </div>
-                    ) : null}
-                  </button>
-                ))
-              )}
-            </div>
-
-            <div style={styles.sidebarFooter}>
-              <button
-                onClick={() => (window.location.href = "/")}
-                style={styles.ghostButtonFull}
-                title="Zur Landingpage"
-              >
-                ← Zur Landingpage
-              </button>
-            </div>
-          </aside>
-        ) : null}
+        {/* Sidebar (Desktop only) */}
+        {!isMobile ? <aside style={styles.sidebar}>{SidebarContent}</aside> : null}
 
         {/* Main */}
         <section style={sx(styles.main, isMobile && styles.mainMobile)}>
@@ -662,13 +620,18 @@ export default function CreatePage() {
               Lade ein Foto hoch und erhalte ein kurzes Video. Deine bisherigen Projekte findest du links im Menü.
             </div>
 
-            {isMobile ? (
-              <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {/* ✅ Prominent: Neues Projekt auch im Main (immer sichtbar) */}
+            <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button onClick={newProject} type="button" style={styles.primaryGhostButton}>
+                ＋ Neues Projekt
+              </button>
+
+              {isMobile ? (
                 <div style={sx(styles.userChip, { maxWidth: "100%" })} title={userEmail}>
                   {userEmail || "User"}
                 </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </div>
 
           <div style={contentGridStyle}>
@@ -705,7 +668,7 @@ export default function CreatePage() {
                 )}
               </div>
 
-              {/* ✅ Video-Format */}
+              {/* Video-Format */}
               <div style={{ marginTop: 12 }}>
                 <div style={styles.sectionLabel}>Video-Format</div>
                 <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -723,7 +686,7 @@ export default function CreatePage() {
                 </div>
               </div>
 
-              {/* ✅ Was soll passieren? */}
+              {/* Motion */}
               <div style={{ marginTop: 14 }}>
                 <div style={styles.sectionLabel}>Was soll passieren?</div>
                 <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
@@ -739,7 +702,14 @@ export default function CreatePage() {
                         <div style={{ fontSize: 18, lineHeight: 1 }}>{m.emoji}</div>
                         <div style={{ flex: 1, textAlign: "left" }}>
                           <div style={{ fontWeight: 950, fontSize: 13 }}>{m.title}</div>
-                          <div style={{ marginTop: 4, fontSize: 12.5, color: "rgba(255,255,255,0.68)", lineHeight: 1.35 }}>
+                          <div
+                            style={{
+                              marginTop: 4,
+                              fontSize: 12.5,
+                              color: "rgba(255,255,255,0.68)",
+                              lineHeight: 1.35,
+                            }}
+                          >
                             {m.desc}
                           </div>
                         </div>
@@ -759,6 +729,11 @@ export default function CreatePage() {
                   : uiState === "processing"
                   ? "Erstelle Video …"
                   : "Video erstellen"}
+              </button>
+
+              {/* Optional: Reset Button direkt unter dem CTA (praktisch beim Testen) */}
+              <button onClick={newProject} type="button" style={sx(dangerButtonStyle(), { marginTop: 10 })}>
+                Zurücksetzen
               </button>
 
               <div
@@ -802,7 +777,12 @@ export default function CreatePage() {
 
               <div style={previewStyle}>
                 {activeVideoUrl ? (
-                  <video controls src={activeVideoUrl} style={{ width: "100%", height: "100%", display: "block" }} />
+                  <video
+                    key={activeVideoUrl} // wichtig, damit er bei URL Wechsel wirklich neu lädt
+                    controls
+                    src={activeVideoUrl}
+                    style={{ width: "100%", height: "100%", display: "block" }}
+                  />
                 ) : (
                   <div style={{ padding: 16, color: "rgba(255,255,255,0.65)", fontSize: 13 }}>
                     Sobald ein Video fertig ist, erscheint es hier. Wähle links ein Projekt oder erstelle ein neues.
@@ -816,7 +796,9 @@ export default function CreatePage() {
                     Download MP4
                   </a>
                 ) : (
-                  <span style={sx(styles.secondaryButton, { opacity: 0.55, cursor: "not-allowed" })}>Download MP4</span>
+                  <span style={sx(styles.secondaryButton, { opacity: 0.55, cursor: "not-allowed" })}>
+                    Download MP4
+                  </span>
                 )}
 
                 <button onClick={loadJobs} style={styles.ghostButtonFull}>
@@ -920,20 +902,27 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: "column",
   },
 
-  sidebarMobile: {
+  // ✅ Mobile Drawer (statt “Sidebar im Layout”)
+  drawer: {
     position: "fixed",
     top: 74,
     left: 12,
     right: 12,
-    maxHeight: "calc(100vh - 92px)",
+    bottom: 12,
     zIndex: 30,
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(10,12,18,0.92)",
+    backdropFilter: "blur(12px)",
+    overflow: "hidden",
     transform: "translateY(-8px)",
     opacity: 0,
     pointerEvents: "none",
     transition: "opacity 160ms ease, transform 160ms ease",
+    display: "flex",
+    flexDirection: "column",
   },
-
-  sidebarMobileOpen: {
+  drawerOpen: {
     transform: "translateY(0px)",
     opacity: 1,
     pointerEvents: "auto",
@@ -946,13 +935,35 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     borderBottom: "1px solid rgba(255,255,255,0.10)",
   },
+
+  sidebarBody: {
+    padding: 12,
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    flex: 1,
+  },
+
   sidebarList: {
-    padding: 10,
+    padding: 0,
     overflowY: "auto",
   },
+
   sidebarFooter: {
     padding: 12,
     borderTop: "1px solid rgba(255,255,255,0.10)",
+  },
+
+  newProjectButton: {
+    width: "100%",
+    padding: "12px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "linear-gradient(135deg, rgba(99,102,241,0.24), rgba(14,165,233,0.18))",
+    color: "rgba(255,255,255,0.95)",
+    fontWeight: 950,
+    cursor: "pointer",
   },
 
   jobRow: {
@@ -1002,6 +1013,16 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.55,
     color: "rgba(255,255,255,0.70)",
     maxWidth: 720,
+  },
+
+  primaryGhostButton: {
+    padding: "10px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(99,102,241,0.45)",
+    background: "rgba(99,102,241,0.12)",
+    color: "rgba(255,255,255,0.92)",
+    fontWeight: 950,
+    cursor: "pointer",
   },
 
   contentGrid: {
