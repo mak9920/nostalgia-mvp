@@ -2,6 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
 export async function middleware(req: NextRequest) {
+  if (process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === "1") {
+  return NextResponse.next();
+}
   const { pathname, search } = req.nextUrl;
 
   // Nur /create (und Unterseiten) schützen
