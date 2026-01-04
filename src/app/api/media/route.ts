@@ -9,9 +9,12 @@ const Q = z.object({
 });
 
 function normalizeStoragePath(p: string) {
-  // erlaubt sowohl "uploads/<orderId>/file.mp4" als auch "<orderId>/file.mp4"
+  // Accept:
+  // - "uploads/<orderId>/file.mp4"
+  // - "/uploads/<orderId>/file.mp4"
+  // - "<orderId>/file.mp4"
   const s = p.replace(/^\/+/, "");
-  return s.startsWith("uploads/") ? s.slice("uploads/".length) : s;
+  return s; // ✅ NICHT mehr "uploads/" entfernen
 }
 
 export async function GET(req: Request) {
@@ -27,7 +30,10 @@ export async function GET(req: Request) {
     .createSignedUrl(storagePath, 60 * 60); // 1h
 
   if (error || !data?.signedUrl) {
-    return NextResponse.json({ error: "Could not sign url", details: error?.message }, { status: 500 });
+    return NextResponse.json(
+      { error: "Could not sign url", details: error?.message || "No signedUrl" },
+      { status: 500 }
+    );
   }
 
   return NextResponse.redirect(data.signedUrl, 302);
